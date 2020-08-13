@@ -5,7 +5,7 @@ Pymodbus Server With Callbacks
 
 This is an example of adding callbacks to a running modbus server
 when a value is written to it. In order for this to work, it needs
-a device-mapping file.
+a device-mapping.txt file.
 """
 # --------------------------------------------------------------------------- #
 # import the python libraries we need
@@ -15,10 +15,13 @@ from multiprocessing import Queue, Process
 # configure the service logging
 # --------------------------------------------------------------------------- #
 import logging
-
 # --------------------------------------------------------------------------- #
 # import the modbus libraries we need
 # --------------------------------------------------------------------------- #
+import struct
+
+from pymodbus.constants import Endian
+from pymodbus.payload import BinaryPayloadDecoder, BinaryPayloadBuilder
 from pymodbus.server.asynchronous import StartTcpServer
 from pymodbus.device import ModbusDeviceIdentification
 from pymodbus.datastore import ModbusSparseDataBlock
@@ -29,6 +32,42 @@ logging.basicConfig()
 log = logging.getLogger()
 log.setLevel(logging.DEBUG)
 
+
+class YocotpuceBinding(object):
+
+    def __init__(self, reg_no, hwid, encoding):
+        self.reg_no = reg_no
+        self.hwid = hwid
+        self.ysensor = YSensor.FindSensor(hwid)
+        self.encoding = encoding
+
+    def encode_value(self, val):
+        if self.encoding == 'int8':
+            return [int(val)]
+        elif self.encoding == 'int16':
+            return [int(val)]
+        elif self.encoding == 'int32':
+            intval = int(val)
+            intval_lo = intval & 0xff
+            intval_hi = intval >> 16
+            return [intval_hi, intval_lo ]
+        elif self.encoding == 'float16':
+            return [int(val)]
+        elif self.encoding == 'float32':
+
+            builder = BinaryPayloadBuilder(byteorder=Endian.Big)
+            builder.add_32bit_float(val)
+            payload = builder.build()
+            ba = builder.to_registers()
+            # ba = list(struct.pack("<f", val))
+            return ba
+
+    def get_encoded_measure(self):
+        val = self.ysensor.get_currentValue()
+        return self.encode_value(val)
+
+    def get_hwid(self):
+        return self.hwid
 
 # --------------------------------------------------------------------------- #
 # create your custom data block with callbacks
@@ -46,11 +85,7 @@ class YoctopuceDataBlock(ModbusSparseDataBlock):
         self.devices = devices
         values = {}
         for reg in devices.keys():
-            hwid = self.devices[reg]
-            sensor = YSensor.FindSensor(hwid)
-            val = sensor.get_currentValue()
-            val = val * 1000
-            values[reg] = int(val)
+            values[reg] = self.devices[reg].get_encoded_measure()
 
         values[0xbeef] = len(values)  # the number of devices
         super(YoctopuceDataBlock, self).__init__(values)
@@ -70,14 +105,10 @@ class YoctopuceDataBlock(ModbusSparseDataBlock):
         print("wrote {} ".format(value, address))
 
     def getValues(self, address, count=1):
-        print("read {}".format(address))
-        hwid = self.devices[address]
-        sensor = YSensor.FindSensor(hwid)
-        val = sensor.get_currentValue() *1000
-        test = int(val)
-        return test
-        #return super(YoctopuceDataBlock, self).getValues(address, count)
-
+        print("read %d count %d -> %s " % (address, count, self.devices[address].get_hwid()))
+        val = self.devices[address].get_encoded_measure()
+        print(val)
+        return val
 
 # --------------------------------------------------------------------------- #
 # define your callback process
@@ -130,7 +161,8 @@ def read_device_map(path):
         for line in stream:
             piece = line.strip().split(',')
             hwid = piece[1]
-            devices[int(piece[0], 16)] = hwid
+            regno = int(piece[0], 16)
+            devices[regno] = YocotpuceBinding(regno, hwid, piece[2])
     return devices
 
 
@@ -141,14 +173,14 @@ def run_callback_server():
     errmsg = YRefParam()
 
     # Setup the API to use local USB devices
-    if YAPI.RegisterHub("usb", errmsg) != YAPI.SUCCESS:
+    if YAPI.RegisterHub("localhost", errmsg) != YAPI.SUCCESS:
         sys.exit("init error" + str(errmsg))
 
     # ----------------------------------------------------------------------- #
     # initialize your data store
     # ----------------------------------------------------------------------- #
     queue = Queue()
-    devices = read_device_map("device-mapping")
+    devices = read_device_map("device-mapping.txt")
 
     block = YoctopuceDataBlock(devices)
     store = ModbusSlaveContext(di=block, co=block, hr=block, ir=block)

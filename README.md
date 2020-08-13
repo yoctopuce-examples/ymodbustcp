@@ -34,5 +34,4 @@ Then you only have to launch the server::
 ## More Informations
 
 For more information you can have a look at this article:
-
-    https://www.yoctopuce.com/EN/article/using-yoctopuce-sensors-with-modbus-tcp 
+https://www.yoctopuce.com/EN/article/using-yoctopuce-sensors-with-modbus-tcp 

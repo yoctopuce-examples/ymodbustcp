@@ -42,25 +42,19 @@ class YocotpuceBinding(object):
         self.encoding = encoding
 
     def encode_value(self, val):
+        builder = BinaryPayloadBuilder(byteorder=Endian.Big)
         if self.encoding == 'int8':
-            return [int(val)]
+            builder.add_8bit_int(int(val))
         elif self.encoding == 'int16':
-            return [int(val)]
+            builder.add_16bit_int(int(val))
         elif self.encoding == 'int32':
-            intval = int(val)
-            intval_lo = intval & 0xff
-            intval_hi = intval >> 16
-            return [intval_hi, intval_lo ]
+            builder.add_32bit_int(int(val))
         elif self.encoding == 'float16':
-            return [int(val)]
+            builder.add_16bit_float(val)
         elif self.encoding == 'float32':
-
-            builder = BinaryPayloadBuilder(byteorder=Endian.Big)
             builder.add_32bit_float(val)
-            payload = builder.build()
-            ba = builder.to_registers()
-            # ba = list(struct.pack("<f", val))
-            return ba
+        ba = builder.to_registers()
+        return ba
 
     def get_encoded_measure(self):
         val = self.ysensor.get_currentValue()
@@ -173,7 +167,7 @@ def run_callback_server():
     errmsg = YRefParam()
 
     # Setup the API to use local USB devices
-    if YAPI.RegisterHub("localhost", errmsg) != YAPI.SUCCESS:
+    if YAPI.RegisterHub("usb", errmsg) != YAPI.SUCCESS:
         sys.exit("init error" + str(errmsg))
 
     # ----------------------------------------------------------------------- #

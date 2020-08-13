@@ -184,12 +184,12 @@ def run_callback_server():
     # initialize the server information
     # ----------------------------------------------------------------------- #
     identity = ModbusDeviceIdentification()
-    identity.VendorName = 'pymodbus'
-    identity.ProductCode = 'PM'
-    identity.VendorUrl = 'http://github.com/bashwork/pymodbus/'
-    identity.ProductName = 'pymodbus Server'
-    identity.ModelName = 'pymodbus Server'
-    identity.MajorMinorRevision = '2.3.0'
+    identity.VendorName = 'Yoctopuce'
+    identity.ProductCode = 'YMT'
+    identity.VendorUrl = 'https://github.com/yoctopuce-examples/ymodbustcp'
+    identity.ProductName = 'ymodbustcp Server'
+    identity.ModelName = 'ypymodbus Server'
+    identity.MajorMinorRevision = '0.0.1'
 
     # ----------------------------------------------------------------------- #
     # run the server you want

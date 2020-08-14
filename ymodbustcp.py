@@ -10,23 +10,23 @@ a device-mapping.txt file.
 # --------------------------------------------------------------------------- #
 # import the python libraries we need
 # --------------------------------------------------------------------------- #
-from multiprocessing import Queue, Process
+from multiprocessing import Queue
 # --------------------------------------------------------------------------- #
 # configure the service logging
 # --------------------------------------------------------------------------- #
 import logging
+
+from pymodbus.constants import Endian
+from pymodbus.payload import BinaryPayloadBuilder
+from pymodbus.server.asynchronous import StartTcpServer
+from pymodbus.device import ModbusDeviceIdentification
+from pymodbus.datastore import ModbusSequentialDataBlock
+from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
+from yoctopuce.yocto_api import *
+
 # --------------------------------------------------------------------------- #
 # import the modbus libraries we need
 # --------------------------------------------------------------------------- #
-import struct
-
-from pymodbus.constants import Endian
-from pymodbus.payload import BinaryPayloadDecoder, BinaryPayloadBuilder
-from pymodbus.server.asynchronous import StartTcpServer
-from pymodbus.device import ModbusDeviceIdentification
-from pymodbus.datastore import ModbusSparseDataBlock
-from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
-from yoctopuce.yocto_api import *
 
 logging.basicConfig()
 log = logging.getLogger()
@@ -36,10 +36,15 @@ log.setLevel(logging.DEBUG)
 class YocotpuceBinding(object):
 
     def __init__(self, reg_no, hwid, encoding):
-        self.reg_no = reg_no
+        self.reg_addr = reg_no
         self.hwid = hwid
         self.ysensor = YSensor.FindSensor(hwid)
         self.encoding = encoding
+        self.reg_len = 2
+        if self.encoding == 'int8':
+            self.reg_len = 1
+        elif self.encoding == 'int32' or self.encoding == 'float32':
+            self.reg_len = 2
 
     def encode_value(self, val):
         builder = BinaryPayloadBuilder(byteorder=Endian.Big)
@@ -56,83 +61,71 @@ class YocotpuceBinding(object):
         ba = builder.to_registers()
         return ba
 
-    def get_encoded_measure(self):
+    def validate(self, address, count):
+        end_addr = address + count
+        if end_addr < self.reg_addr:
+            return False
+        if address > (self.reg_addr + self.reg_len):
+            return False
+        return True
+
+    def get_encoded_measure(self, address, count):
+        offset = address - self.reg_addr
         val = self.ysensor.get_currentValue()
-        return self.encode_value(val)
+        full_register = self.encode_value(val)
+        return full_register[offset: offset + count]
+
+    def set_encoded_measure(self, org_val, address, count):
+        end_addr = address + count
+        # skip device that are outside the range
+        if end_addr <= self.reg_addr:
+            return
+        if address > (self.reg_addr + self.reg_len):
+            return
+        # get sensor values
+        val = self.ysensor.get_currentValue()
+        full_register = self.encode_value(val)
+        # and update the corresponding register
+        offset = self.reg_addr
+        for word in full_register:
+            org_val[offset] = word
+            offset += 1
 
     def get_hwid(self):
         return self.hwid
+
+    def get_reglen(self):
+        return self.reg_len
+
 
 # --------------------------------------------------------------------------- #
 # create your custom data block with callbacks
 # --------------------------------------------------------------------------- #
 
 
-class YoctopuceDataBlock(ModbusSparseDataBlock):
+class YoctopuceDataBlock(ModbusSequentialDataBlock):
     """ A datablock that stores the new value in memory
     and performs a custom action after it has been stored.
     """
 
     def __init__(self, devices):
-        """
-        """
         self.devices = devices
-        values = {}
+        start = 0xffff
+        end = 0
         for reg in devices.keys():
-            values[reg] = self.devices[reg].get_encoded_measure()
-
-        values[0xbeef] = len(values)  # the number of devices
-        super(YoctopuceDataBlock, self).__init__(values)
-
-    def setValues(self, address, value):
-        """ Sets the requested values of the datastore
-
-        :param address: The starting address
-        :param values: The new values to be set
-        """
-        super(YoctopuceDataBlock, self).setValues(address, value)
-
-        # whatever you want to do with the written value is done here,
-        # however make sure not to do too much work here or it will
-        # block the server, espectially if the server is being written
-        # to very quickly
-        print("wrote {} ".format(value, address))
+            reglen = devices[reg].get_reglen()
+            if reg < start:
+                start = reg
+            if reg + reglen > end:
+                end = reg + reglen
+        values = [0] * (end - start)
+        super(YoctopuceDataBlock, self).__init__(start, values)
 
     def getValues(self, address, count=1):
-        print("read %d count %d -> %s " % (address, count, self.devices[address].get_hwid()))
-        val = self.devices[address].get_encoded_measure()
-        print(val)
-        return val
-
-# --------------------------------------------------------------------------- #
-# define your callback process
-# --------------------------------------------------------------------------- #
-
-
-def rescale_value(value):
-    """ Rescale the input value from the range
-    of 0..100 to -3200..3200.
-
-    :param value: The input value to scale
-    :returns: The rescaled value
-    """
-    s = 1 if value >= 50 else -1
-    c = value if value < 50 else (value - 50)
-    return s * (c * 64)
-
-
-def device_writer(queue):
-    """ A worker process that processes new messages
-    from a queue to write to device outputs
-
-    :param queue: The queue to get new messages from
-    """
-    while True:
-        device, value = queue.get()
-        scaled = rescale_value(value[0])
-        log.debug("Write(%s) = %s" % (device, value))
-        if not device: continue
-        # do any logic here to update your devices
+        for reg in self.devices.keys():
+            self.devices[reg].set_encoded_measure(self.values, address, count)
+        values = super(YoctopuceDataBlock, self).getValues(address, count)
+        return values
 
 
 # --------------------------------------------------------------------------- #
@@ -177,7 +170,7 @@ def run_callback_server():
     devices = read_device_map("device-mapping.txt")
 
     block = YoctopuceDataBlock(devices)
-    store = ModbusSlaveContext(di=block, co=block, hr=block, ir=block)
+    store = ModbusSlaveContext(di=block, co=block, hr=block, ir=block, zero_mode=True)
     context = ModbusServerContext(slaves=store, single=True)
 
     # ----------------------------------------------------------------------- #
@@ -191,11 +184,6 @@ def run_callback_server():
     identity.ModelName = 'ypymodbus Server'
     identity.MajorMinorRevision = '0.0.1'
 
-    # ----------------------------------------------------------------------- #
-    # run the server you want
-    # ----------------------------------------------------------------------- #
-    p = Process(target=device_writer, args=(queue,))
-    p.start()
     StartTcpServer(context, identity=identity, address=("localhost", 5020))
 
 

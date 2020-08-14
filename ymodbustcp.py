@@ -61,21 +61,7 @@ class YocotpuceBinding(object):
         ba = builder.to_registers()
         return ba
 
-    def validate(self, address, count):
-        end_addr = address + count
-        if end_addr < self.reg_addr:
-            return False
-        if address > (self.reg_addr + self.reg_len):
-            return False
-        return True
-
-    def get_encoded_measure(self, address, count):
-        offset = address - self.reg_addr
-        val = self.ysensor.get_currentValue()
-        full_register = self.encode_value(val)
-        return full_register[offset: offset + count]
-
-    def set_encoded_measure(self, org_val, address, count):
+    def update_measure(self, org_val, address, count):
         end_addr = address + count
         # skip device that are outside the range
         if end_addr <= self.reg_addr:
@@ -123,7 +109,7 @@ class YoctopuceDataBlock(ModbusSequentialDataBlock):
 
     def getValues(self, address, count=1):
         for reg in self.devices.keys():
-            self.devices[reg].set_encoded_measure(self.values, address, count)
+            self.devices[reg].update_measure(self.values, address, count)
         values = super(YoctopuceDataBlock, self).getValues(address, count)
         return values
 

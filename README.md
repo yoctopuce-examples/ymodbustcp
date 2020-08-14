@@ -20,9 +20,9 @@ Then you must edit the device_mapping.txt file so that it corresponds to the Yoc
 Ex: 
 
 ````
-0x0001,METEOMK2-114F07.temperature,float32
+0x0000,METEOMK2-114F07.temperature,float32
 0x0002,METEOMK2-114F07.humidity,float32
-0x0003,LIGHTMK3-C0905.lightSensor,int32
+0x0004,LIGHTMK3-C0905.lightSensor,int32
 ````
 
 Then you only have to launch the server::
